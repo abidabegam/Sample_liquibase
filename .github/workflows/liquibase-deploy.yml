@@ -8,7 +8,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -27,43 +26,54 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-m2-
 
-      # Optional: quick validation (doesn't change DB)
-      - name: Liquibase validate
-        env:
-          RDS_ENDPOINT:  ${{ secrets.RDS_ENDPOINT }}     # e.g. database-1....rds.amazonaws.com
-          RDS_DBNAME:    ${{ secrets.RDS_DBNAME }}       # e.g. sample_liquibase
-          RDS_USERNAME:  ${{ secrets.RDS_USERNAME }}     # e.g. liquibase_user (or admin)
-          RDS_PASSWORD:  ${{ secrets.RDS_PASSWORD }}
+      # --- SSH to EC2 and run Liquibase there ---
+      - name: Prepare SSH key
         run: |
-          mvn -B org.liquibase:liquibase-maven-plugin:4.27.0:validate \
-            -Dliquibase.url="jdbc:postgresql://${RDS_ENDPOINT}:5432/${RDS_DBNAME}?sslmode=require" \
-            -Dliquibase.username="${RDS_USERNAME}" \
-            -Dliquibase.password="${RDS_PASSWORD}" \
-            -Dliquibase.changeLogFile="src/main/resources/db/changelog/db.changelog-master.yaml"
+          echo "${{ secrets.EC2_SSH_KEY }}" > ec2_key.pem
+          chmod 600 ec2_key.pem
 
-      - name: Liquibase update (apply changes)
-        env:
-          RDS_ENDPOINT:  ${{ secrets.RDS_ENDPOINT }}
-          RDS_DBNAME:    ${{ secrets.RDS_DBNAME }}
-          RDS_USERNAME:  ${{ secrets.RDS_USERNAME }}
-          RDS_PASSWORD:  ${{ secrets.RDS_PASSWORD }}
+      - name: Add EC2 to known_hosts (skip strict check)
         run: |
-          mvn -B org.liquibase:liquibase-maven-plugin:4.27.0:update \
-            -Dliquibase.url="jdbc:postgresql://${RDS_ENDPOINT}:5432/${RDS_DBNAME}?sslmode=require" \
-            -Dliquibase.username="${RDS_USERNAME}" \
-            -Dliquibase.password="${RDS_PASSWORD}" \
-            -Dliquibase.changeLogFile="src/main/resources/db/changelog/db.changelog-master.yaml"
+          printf "Host *\n    StrictHostKeyChecking no\n" >> ~/.ssh/config
 
-      # Optional: show history after update
-      - name: Liquibase history (report)
+      - name: Deploy via EC2
         env:
-          RDS_ENDPOINT:  ${{ secrets.RDS_ENDPOINT }}
-          RDS_DBNAME:    ${{ secrets.RDS_DBNAME }}
-          RDS_USERNAME:  ${{ secrets.RDS_USERNAME }}
-          RDS_PASSWORD:  ${{ secrets.RDS_PASSWORD }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          REPO_URL: ${{ secrets.REPO_CLONE_URL }}
+          JDBC_URL: ${{ secrets.RDS_JDBC_URL }}
+          DB_USER:  ${{ secrets.DB_USER }}
+          DB_PASS:  ${{ secrets.DB_PASS }}
         run: |
-          mvn -B org.liquibase:liquibase-maven-plugin:4.27.0:history \
-            -Dliquibase.url="jdbc:postgresql://${RDS_ENDPOINT}:5432/${RDS_DBNAME}?sslmode=require" \
-            -Dliquibase.username="${RDS_USERNAME}" \
-            -Dliquibase.password="${RDS_PASSWORD}" \
-            -Dliquibase.changeLogFile="src/main/resources/db/changelog/db.changelog-master.yaml"
+          ssh -i ec2_key.pem -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} <<'EOF'
+            set -e
+
+            # 1) Clone or update the repo on the EC2 box
+            WORKDIR="$HOME/Sample_liquibase"
+            if [ ! -d "$WORKDIR/.git" ]; then
+              git clone "${REPO_URL}" "$WORKDIR"
+            else
+              cd "$WORKDIR"
+              git remote set-url origin "${REPO_URL}" || true
+              git fetch --all --prune
+              git checkout -B main origin/main || git checkout main || true
+              git pull --ff-only origin main || true
+            fi
+
+            cd "$WORKDIR"
+
+            # 2) Run Liquibase update against RDS
+            mvn -q \
+              -Dliquibase.url="${JDBC_URL}" \
+              -Dliquibase.username="${DB_USER}" \
+              -Dliquibase.password="${DB_PASS}" \
+              -Dliquibase.changeLogFile=src/main/resources/db/changelog/db.changelog-master.yaml \
+              liquibase:update
+
+            # Optional: show history (helps debug)
+            mvn -q \
+              -Dliquibase.url="${JDBC_URL}" \
+              -Dliquibase.username="${DB_USER}" \
+              -Dliquibase.password="${DB_PASS}" \
+              liquibase:history
+          EOF
