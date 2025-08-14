@@ -2,7 +2,7 @@ name: Liquibase Deploy
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
@@ -10,53 +10,60 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout (for metadata only)
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: SSH to EC2 and run Liquibase
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Set up Temurin JDK 17
+        uses: actions/setup-java@v4
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script_stop: true
-          script: |
-            set -e
+          distribution: temurin
+          java-version: "17"
 
-            # 1) Ensure tools are present
-            if ! command -v git >/dev/null 2>&1; then
-              sudo dnf install -y git
-            fi
-            if ! command -v java >/dev/null 2>&1; then
-              sudo dnf install -y java-17-amazon-corretto
-            fi
-            if ! command -v mvn >/dev/null 2>&1; then
-              sudo dnf install -y maven
-            fi
+      - name: Cache Maven
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-m2-
 
-            # 2) Prepare working folder
-            mkdir -p ~/liquibase-deploy
-            cd ~/liquibase-deploy
+      # Optional: quick validation (doesn't change DB)
+      - name: Liquibase validate
+        env:
+          RDS_ENDPOINT:  ${{ secrets.RDS_ENDPOINT }}     # e.g. database-1....rds.amazonaws.com
+          RDS_DBNAME:    ${{ secrets.RDS_DBNAME }}       # e.g. sample_liquibase
+          RDS_USERNAME:  ${{ secrets.RDS_USERNAME }}     # e.g. liquibase_user (or admin)
+          RDS_PASSWORD:  ${{ secrets.RDS_PASSWORD }}
+        run: |
+          mvn -B org.liquibase:liquibase-maven-plugin:4.27.0:validate \
+            -Dliquibase.url="jdbc:postgresql://${RDS_ENDPOINT}:5432/${RDS_DBNAME}?sslmode=require" \
+            -Dliquibase.username="${RDS_USERNAME}" \
+            -Dliquibase.password="${RDS_PASSWORD}" \
+            -Dliquibase.changeLogFile="src/main/resources/db/changelog/db.changelog-master.yaml"
 
-            # 3) Clone or update repo
-            if [ -d repo ]; then
-              cd repo
-              git fetch --all
-              git reset --hard origin/main
-            else
-              git clone "${{ secrets.REPO_CLONE_URL }}" repo
-              cd repo
-            fi
+      - name: Liquibase update (apply changes)
+        env:
+          RDS_ENDPOINT:  ${{ secrets.RDS_ENDPOINT }}
+          RDS_DBNAME:    ${{ secrets.RDS_DBNAME }}
+          RDS_USERNAME:  ${{ secrets.RDS_USERNAME }}
+          RDS_PASSWORD:  ${{ secrets.RDS_PASSWORD }}
+        run: |
+          mvn -B org.liquibase:liquibase-maven-plugin:4.27.0:update \
+            -Dliquibase.url="jdbc:postgresql://${RDS_ENDPOINT}:5432/${RDS_DBNAME}?sslmode=require" \
+            -Dliquibase.username="${RDS_USERNAME}" \
+            -Dliquibase.password="${RDS_PASSWORD}" \
+            -Dliquibase.changeLogFile="src/main/resources/db/changelog/db.changelog-master.yaml"
 
-            # 4) Quick reachability check to RDS (optional)
-            if command -v nc >/dev/null 2>&1; then
-              nc -vz database-1-instance-1.cn2im6mmy1y9.us-east-2.rds.amazonaws.com 5432 || true
-            fi
-
-            # 5) Run Liquibase update
-            mvn -q \
-              -Dliquibase.url="${{ secrets.RDS_JDBC_URL }}" \
-              -Dliquibase.username="${{ secrets.DB_USER }}" \
-              -Dliquibase.password="${{ secrets.DB_PASS }}" \
-              -Dliquibase.changeLogFile=src/main/resources/db/changelog/db.changelog-master.yaml \
-              liquibase:update
+      # Optional: show history after update
+      - name: Liquibase history (report)
+        env:
+          RDS_ENDPOINT:  ${{ secrets.RDS_ENDPOINT }}
+          RDS_DBNAME:    ${{ secrets.RDS_DBNAME }}
+          RDS_USERNAME:  ${{ secrets.RDS_USERNAME }}
+          RDS_PASSWORD:  ${{ secrets.RDS_PASSWORD }}
+        run: |
+          mvn -B org.liquibase:liquibase-maven-plugin:4.27.0:history \
+            -Dliquibase.url="jdbc:postgresql://${RDS_ENDPOINT}:5432/${RDS_DBNAME}?sslmode=require" \
+            -Dliquibase.username="${RDS_USERNAME}" \
+            -Dliquibase.password="${RDS_PASSWORD}" \
+            -Dliquibase.changeLogFile="src/main/resources/db/changelog/db.changelog-master.yaml"
