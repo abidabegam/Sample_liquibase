@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -26,54 +27,50 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-m2-
 
-      # --- SSH to EC2 and run Liquibase there ---
-      - name: Prepare SSH key
+      # --- Fix: create ~/.ssh and write config + EC2 key ---
+      - name: Prepare SSH on runner
+        shell: bash
         run: |
-          echo "${{ secrets.EC2_SSH_KEY }}" > ec2_key.pem
-          chmod 600 ec2_key.pem
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf "Host *\n    StrictHostKeyChecking no\n" > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/ec2_key.pem
+          chmod 600 ~/.ssh/ec2_key.pem
 
-      - name: Add EC2 to known_hosts (skip strict check)
-        run: |
-          printf "Host *\n    StrictHostKeyChecking no\n" >> ~/.ssh/config
-
+      # --- Deploy from EC2 to RDS using your repo and secrets ---
       - name: Deploy via EC2
         env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USER: ${{ secrets.EC2_USER }}
-          REPO_URL: ${{ secrets.REPO_CLONE_URL }}
-          JDBC_URL: ${{ secrets.RDS_JDBC_URL }}
-          DB_USER:  ${{ secrets.DB_USER }}
-          DB_PASS:  ${{ secrets.DB_PASS }}
+          REPO_CLONE_URL: ${{ secrets.REPO_CLONE_URL }}
+          RDS_JDBC_URL:   ${{ secrets.RDS_JDBC_URL }}
+          DB_USER:        ${{ secrets.DB_USER }}
+          DB_PASS:        ${{ secrets.DB_PASS }}
         run: |
-          ssh -i ec2_key.pem -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} <<'EOF'
-            set -e
+          set -euo pipefail
+          ssh -i ~/.ssh/ec2_key.pem -o StrictHostKeyChecking=no "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" <<EOF
+            set -euo pipefail
 
-            # 1) Clone or update the repo on the EC2 box
-            WORKDIR="$HOME/Sample_liquibase"
-            if [ ! -d "$WORKDIR/.git" ]; then
-              git clone "${REPO_URL}" "$WORKDIR"
+            # Install prerequisites if missing (Amazon Linux)
+            if ! command -v java >/dev/null; then sudo dnf install -y java-17-amazon-corretto; fi
+            if ! command -v mvn  >/dev/null; then sudo dnf install -y maven; fi
+            if ! command -v git  >/dev/null; then sudo dnf install -y git; fi
+
+            # Checkout or refresh the repo
+            if [ -d ~/Sample_liquibase ]; then
+              cd ~/Sample_liquibase
+              git fetch --all
+              git reset --hard origin/main
             else
-              cd "$WORKDIR"
-              git remote set-url origin "${REPO_URL}" || true
-              git fetch --all --prune
-              git checkout -B main origin/main || git checkout main || true
-              git pull --ff-only origin main || true
+              git clone "${REPO_CLONE_URL}" ~/Sample_liquibase
+              cd ~/Sample_liquibase
             fi
 
-            cd "$WORKDIR"
-
-            # 2) Run Liquibase update against RDS
+            # Run Liquibase against RDS
             mvn -q \
-              -Dliquibase.url="${JDBC_URL}" \
+              -Dliquibase.url="${RDS_JDBC_URL}" \
               -Dliquibase.username="${DB_USER}" \
               -Dliquibase.password="${DB_PASS}" \
               -Dliquibase.changeLogFile=src/main/resources/db/changelog/db.changelog-master.yaml \
               liquibase:update
-
-            # Optional: show history (helps debug)
-            mvn -q \
-              -Dliquibase.url="${JDBC_URL}" \
-              -Dliquibase.username="${DB_USER}" \
-              -Dliquibase.password="${DB_PASS}" \
-              liquibase:history
           EOF
