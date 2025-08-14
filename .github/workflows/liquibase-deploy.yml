@@ -1,0 +1,62 @@
+name: Liquibase Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (for metadata only)
+        uses: actions/checkout@v4
+
+      - name: SSH to EC2 and run Liquibase
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+
+            # 1) Ensure tools are present
+            if ! command -v git >/dev/null 2>&1; then
+              sudo dnf install -y git
+            fi
+            if ! command -v java >/dev/null 2>&1; then
+              sudo dnf install -y java-17-amazon-corretto
+            fi
+            if ! command -v mvn >/dev/null 2>&1; then
+              sudo dnf install -y maven
+            fi
+
+            # 2) Prepare working folder
+            mkdir -p ~/liquibase-deploy
+            cd ~/liquibase-deploy
+
+            # 3) Clone or update repo
+            if [ -d repo ]; then
+              cd repo
+              git fetch --all
+              git reset --hard origin/main
+            else
+              git clone "${{ secrets.REPO_CLONE_URL }}" repo
+              cd repo
+            fi
+
+            # 4) Quick reachability check to RDS (optional)
+            if command -v nc >/dev/null 2>&1; then
+              nc -vz database-1-instance-1.cn2im6mmy1y9.us-east-2.rds.amazonaws.com 5432 || true
+            fi
+
+            # 5) Run Liquibase update
+            mvn -q \
+              -Dliquibase.url="${{ secrets.RDS_JDBC_URL }}" \
+              -Dliquibase.username="${{ secrets.DB_USER }}" \
+              -Dliquibase.password="${{ secrets.DB_PASS }}" \
+              -Dliquibase.changeLogFile=src/main/resources/db/changelog/db.changelog-master.yaml \
+              liquibase:update

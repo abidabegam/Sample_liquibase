@@ -1,0 +1,23 @@
+databaseChangeLog:
+    - changeSet:
+          id: 001-ddl
+          author: you
+          changes:
+              - sqlFile:
+                    path: sql/001-create-tables.sql
+                    relativeToChangelogFile: true
+                    splitStatements: true
+                    endDelimiter: ;
+                    stripComments: true
+
+    - changeSet:
+          id: 002-dml
+          author: you
+          runOnChange: false
+          changes:
+              - sqlFile:
+                    path: sql/002-seed-data.sql
+                    relativeToChangelogFile: true
+                    splitStatements: true
+                    endDelimiter: ;
+                    stripComments: true
