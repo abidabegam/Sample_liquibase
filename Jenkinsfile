@@ -5,6 +5,7 @@ pipeline {
   // Only ENV + safety gate remain
   parameters {
     choice(name: 'ENV', choices: ['local','aws'], description: 'Liquibase profile (maps to pom.xml profiles)')
+    choice(name: 'ACTION', choices: ['validate','updateSQL','update'], description: 'Liquibase action to run')
     booleanParam(name: 'APPLY_ON_AWS', defaultValue: false, description: 'Safety gate for AWS apply')
   }
 
