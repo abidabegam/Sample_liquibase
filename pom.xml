@@ -38,10 +38,8 @@
         <artifactId>liquibase-maven-plugin</artifactId>
         <version>${liquibase.version}</version>
         <configuration>
-          <!-- Use whatever is provided at runtime (profile or -Dliquibase.propertyFile) -->
+          <!-- Profiles below set this to your env-specific properties file -->
           <propertyFile>${liquibase.propertyFile}</propertyFile>
-          <promptOnNonLocalDatabase>false</promptOnNonLocalDatabase>
-          <logging>info</logging>
         </configuration>
         <dependencies>
           <dependency>
@@ -54,7 +52,7 @@
     </plugins>
   </build>
 
-  <!-- Convenience: run with -Plocal or -Paws (no need to type -Dliquibase.propertyFile=...) -->
+  <!-- Convenience profiles: run with -Plocal or -Paws -->
   <profiles>
     <profile>
       <id>local</id>

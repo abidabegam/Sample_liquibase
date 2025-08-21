@@ -1,23 +1,51 @@
 databaseChangeLog:
-    - changeSet:
-          id: 001-ddl
-          author: you
-          changes:
-              - sqlFile:
-                    path: sql/001-create-tables.sql
-                    relativeToChangelogFile: true
-                    splitStatements: true
-                    endDelimiter: ;
-                    stripComments: true
+      # Safety guard (local): only run if connected to the expected DB
+      - preConditions:
+              - sqlCheck:
+                      expectedResult: sample_liquibase
+                      sql: "select current_database()"
 
-    - changeSet:
-          id: 002-dml
-          author: you
-          runOnChange: false
-          changes:
-              - sqlFile:
-                    path: sql/002-seed-data.sql
-                    relativeToChangelogFile: true
-                    splitStatements: true
-                    endDelimiter: ;
-                    stripComments: true
+      - changeSet:
+              id: 001-ddl
+              author: you
+              changes:
+                    - sqlFile:
+                            path: sql/001-create-tables.sql
+                            relativeToChangelogFile: true
+                            splitStatements: true
+                            endDelimiter: ;
+                            stripComments: true
+
+      - changeSet:
+              id: 002-dml
+              author: you
+              runOnChange: false
+              changes:
+                    - sqlFile:
+                            path: sql/002-seed-data.sql
+                            relativeToChangelogFile: true
+                            splitStatements: true
+                            endDelimiter: ;
+                            stripComments: true
+
+      - changeSet:
+              id: 003-team
+              author: you
+              changes:
+                    - sqlFile:
+                            path: sql/003-add-team.sql
+                            relativeToChangelogFile: true
+                            splitStatements: true
+                            endDelimiter: ;
+                            stripComments: true
+
+      - changeSet:
+              id: 004-seed-team
+              author: you
+              changes:
+                    - sqlFile:
+                            path: sql/004-seed-team.sql
+                            relativeToChangelogFile: true
+                            splitStatements: true
+                            endDelimiter: ;
+                            stripComments: true
